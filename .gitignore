@@ -8,6 +8,9 @@
 *.pem
 credentials.json
 secrets.json
+api-*.txt
+api_*.txt
+*_api_key.txt
 
 # ============================================
 # Personal / Runtime Data

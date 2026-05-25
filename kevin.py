@@ -912,7 +912,9 @@ async def transcribe_audio(audio: UploadFile = File(...), _auth: bool = Depends(
         temp_path = f.name
 
     try:
-        print(f"🎯 جاري التحويل بـ Whisper ({ext})...")
+        print(f"🎯 جاري التحويل بـ Whisper ({ext})... [temp: {temp_path}]")
+        if not os.path.exists(temp_path):
+            raise HTTPException(status_code=500, detail=f"الملف المؤقت غير موجود: {temp_path}")
         result = whisper_model.transcribe(
             temp_path,
             language="ar",
@@ -930,11 +932,22 @@ async def transcribe_audio(audio: UploadFile = File(...), _auth: bool = Depends(
         return {"text": text, "language": "ar", "audio_size": audio_size}
     except HTTPException:
         raise
+    except FileNotFoundError as e:
+        import traceback
+        print(f"❌ FileNotFoundError: {e}")
+        traceback.print_exc()
+        msg = str(e).lower()
+        if "ffmpeg" in msg or "winerror 2" in msg or e.filename == "ffmpeg" or e.filename == "ffmpeg.exe":
+            raise HTTPException(
+                status_code=500,
+                detail="FFmpeg مش موجود. شغل: pip install imageio-ffmpeg ثم أعد تشغيل Kevin"
+            )
+        raise HTTPException(status_code=500, detail=f"ملف مفقود: {e}")
     except Exception as e:
         import traceback
         print(f"❌ خطأ في Whisper: {type(e).__name__}: {e}")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"خطأ تقني: {type(e).__name__}")
+        raise HTTPException(status_code=500, detail=f"خطأ تقني: {type(e).__name__}: {str(e)[:120]}")
     finally:
         try:
             os.unlink(temp_path)

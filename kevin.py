@@ -84,7 +84,7 @@ SESSION_COOKIE_NAME = "kevin_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
 CLAUDE_MODEL = "claude-sonnet-4-5"
-GEMINI_MODEL = "gemini-2.0-flash-exp"
+GEMINI_MODEL = "gemini-2.5-flash"
 WHISPER_MODEL = "medium"
 
 ARABIC_VOICES = {

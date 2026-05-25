@@ -1,0 +1,85 @@
+# ============================================
+# Secrets & Environment - NEVER commit these
+# ============================================
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+credentials.json
+secrets.json
+
+# ============================================
+# Personal / Runtime Data
+# ============================================
+conversation_history.json
+knowledge_base.json
+*.session
+sessions/
+
+# ============================================
+# Audio / Voice Cache
+# ============================================
+*.mp3
+*.wav
+*.webm
+*.m4a
+*.ogg
+audio_cache/
+tts_cache/
+
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.python-version
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ============================================
+# IDE / Editor
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================
+# Logs
+# ============================================
+*.log
+logs/
+
+# ============================================
+# OS / Misc
+# ============================================
+.cache/
+tmp/
+temp/
+
+# ============================================
+# Whisper models (large — downloaded on first run)
+# ============================================
+*.pt
+~/.cache/whisper/
+
+# ============================================
+# Local backups (keep out of public repo)
+# ============================================
+upload/archive/

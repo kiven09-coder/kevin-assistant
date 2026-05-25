@@ -223,6 +223,103 @@ def load_knowledge_base():
 
 knowledge_base = load_knowledge_base()
 
+# ============================================
+# TOOLS - Web Search (Phase 1) + extensible registry for future connectors
+# ============================================
+def _format_search_results(results: list, query: str, kind: str) -> str:
+    if not results:
+        return f"مفيش نتائج لـ '{query}'."
+    label = "أخبار" if kind == "news" else "نتائج البحث"
+    lines = [f"📰 {label} عن '{query}':\n"]
+    for i, r in enumerate(results, 1):
+        title = (r.get("title") or "").strip()
+        url = (r.get("href") or r.get("url") or "").strip()
+        snippet = (r.get("body") or "").strip()[:300]
+        date = (r.get("date") or "").strip()
+        chunk = f"{i}. {title}"
+        if date:
+            chunk += f"  ({date})"
+        if snippet:
+            chunk += f"\n   {snippet}"
+        if url:
+            chunk += f"\n   🔗 {url}"
+        lines.append(chunk)
+    return "\n".join(lines)
+
+def _search_sync(query: str, kind: str, max_results: int) -> list:
+    from ddgs import DDGS  # raises ImportError if missing
+    with DDGS() as ddgs:
+        if kind == "news":
+            return list(ddgs.news(query, max_results=max_results, safesearch="off"))
+        return list(ddgs.text(query, max_results=max_results, safesearch="off"))
+
+async def web_search(query: str, kind: str = "web", max_results: int = 5) -> str:
+    """Search the web or news headlines via DuckDuckGo. No API key required."""
+    try:
+        max_results = max(1, min(int(max_results), 10))
+        kind = kind if kind in ("web", "news") else "web"
+        print(f"🔍 Web search [{kind}]: '{query}' (max {max_results})")
+        results = await asyncio.to_thread(_search_sync, query, kind, max_results)
+        return _format_search_results(results, query, kind)
+    except ImportError:
+        return "خطأ: حزمة ddgs مش متنصبة. شغل: pip install ddgs"
+    except Exception as e:
+        print(f"❌ Web search error: {type(e).__name__}: {e}")
+        return f"خطأ في البحث: {type(e).__name__}: {str(e)[:200]}"
+
+TOOLS_REGISTRY = {
+    "web_search": {
+        "name": "web_search",
+        "description": (
+            "ابحث في الويب أو الأخبار عبر DuckDuckGo. "
+            "استخدم هذه الأداة لما المستخدم يسأل عن: أحداث جارية، آخر الأخبار، "
+            "أسعار حالية، طقس، نتائج رياضية، أو أي معلومة محتاجة بيانات حديثة "
+            "من النت مش موجودة في تدريبك. "
+            "استخدم kind='news' للأخبار الحديثة، kind='web' للبحث العام."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "نص البحث (عربي أو إنجليزي حسب الموضوع)."
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["web", "news"],
+                    "description": "نوع البحث.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "عدد النتائج (1-10). الافتراضي 5.",
+                    "minimum": 1,
+                    "maximum": 10,
+                },
+            },
+            "required": ["query"],
+        },
+        "handler": web_search,
+    },
+}
+
+def list_claude_tools():
+    return [
+        {"name": t["name"], "description": t["description"], "input_schema": t["input_schema"]}
+        for t in TOOLS_REGISTRY.values()
+    ]
+
+NEWS_KEYWORDS_AR = ["أخبار", "اخبار", "خبر", "إخبار", "إيه اللي بيحصل", "النهارده", "اليوم", "آخر", "احدث", "أحدث", "حاليا", "حالياً"]
+NEWS_KEYWORDS_EN = ["news", "today", "latest", "current", "recent", "headlines", "happening"]
+
+def detect_search_intent(message: str) -> tuple[bool, str]:
+    """Heuristic: returns (should_search, kind) for use with non-tool-calling providers (Gemini)."""
+    low = message.lower()
+    has_ar = any(k in message for k in NEWS_KEYWORDS_AR)
+    has_en = any(k in low for k in NEWS_KEYWORDS_EN)
+    if has_ar or has_en:
+        return True, "news"
+    return False, "web"
+
 SYSTEM_PROMPT = f"""أنت {ASSISTANT_NAME_AR} ({ASSISTANT_NAME})، مساعد ذكي شخصي لعمرو.
 
 عن عمرو:
@@ -239,7 +336,10 @@ SYSTEM_PROMPT = f"""أنت {ASSISTANT_NAME_AR} ({ASSISTANT_NAME})، مساعد �
 
 {knowledge_base.get('summary', '')}
 
-استخدم قاعدة المعرفة دي للإجابة على أسئلة عمرو عن Claude Skills والـ Plugins والـ APIs المتاحة."""
+🔧 الأدوات المتاحة لك:
+- web_search: ابحث في النت أو في الأخبار لما المستخدم يسأل عن حاجة جارية، أخبار، أسعار، طقس، أو أي معلومة محتاجة بيانات حديثة. متترددش تستخدمها لما السؤال يحتاج معلومة حديثة. لما تستخدم النتائج، اذكر المصادر باختصار (مش كل رابط).
+
+استخدم قاعدة المعرفة دي للإجابة على أسئلة عمرو عن Claude Skills والـ Plugins والـ APIs المتاحة، واستخدم web_search لو سأل عن أحداث جارية."""
 
 # ============================================
 # EMBEDDED HTML UI
@@ -816,27 +916,101 @@ conversation_history = load_history()
 # ============================================
 # AI ROUTING
 # ============================================
+MAX_TOOL_ITERATIONS = 4
+
+async def _run_tool(name: str, tool_input: dict) -> str:
+    tool = TOOLS_REGISTRY.get(name)
+    if not tool:
+        return f"خطأ: أداة غير معروفة '{name}'"
+    try:
+        result = await tool["handler"](**(tool_input or {}))
+        return str(result) if result is not None else ""
+    except TypeError as e:
+        return f"خطأ في باراميترات الأداة: {e}"
+    except Exception as e:
+        return f"خطأ في تنفيذ الأداة: {type(e).__name__}: {str(e)[:200]}"
+
 async def chat_with_claude(message, history):
     if not claude_client:
         raise HTTPException(status_code=503, detail="Claude غير متاح")
-    messages = [{"role": h["role"], "content": h["content"]} for h in history if h["role"] in ["user", "assistant"]]
+    messages = [
+        {"role": h["role"], "content": h["content"]}
+        for h in history if h["role"] in ["user", "assistant"] and isinstance(h.get("content"), str)
+    ]
     messages.append({"role": "user", "content": message})
-    response = claude_client.messages.create(
-        model=CLAUDE_MODEL, max_tokens=2048, system=SYSTEM_PROMPT, messages=messages
-    )
-    return response.content[0].text
+    tools = list_claude_tools()
+
+    for _ in range(MAX_TOOL_ITERATIONS):
+        response = await asyncio.to_thread(
+            claude_client.messages.create,
+            model=CLAUDE_MODEL, max_tokens=2048,
+            system=SYSTEM_PROMPT, messages=messages, tools=tools,
+        )
+        if response.stop_reason == "tool_use":
+            tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
+            tool_results = []
+            for tu in tool_uses:
+                result = await _run_tool(tu.name, dict(tu.input or {}))
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu.id,
+                    "content": result,
+                })
+            messages.append({"role": "assistant", "content": [b.model_dump() for b in response.content]})
+            messages.append({"role": "user", "content": tool_results})
+            continue
+
+        # Final text answer
+        parts = [b.text for b in response.content if getattr(b, "type", None) == "text"]
+        return "\n".join(p for p in parts if p) or "[رد Claude فاضي]"
+
+    return "[Claude تجاوز عدد محاولات استدعاء الأدوات]"
+
+async def _gemini_extract_query(message: str) -> str:
+    """Ask Gemini to compress the user's request into a 2-5 word search query."""
+    try:
+        prompt = (
+            "Extract a concise search query (2-5 keywords, no explanation) "
+            "from the user's request below. Output ONLY the query, nothing else.\n\n"
+            f"User: {message}\n\nSearch query:"
+        )
+        resp = await asyncio.to_thread(gemini_model_instance.generate_content, prompt)
+        query = (resp.text or "").strip().strip('"\'').splitlines()[0][:120]
+        return query or message[:80]
+    except Exception as e:
+        print(f"⚠️ Gemini query extraction failed: {e}")
+        return message[:80]
 
 async def chat_with_gemini(message, history):
     if not gemini_model_instance:
         raise HTTPException(status_code=503, detail="Gemini غير متاح")
+
+    # Gemini path doesn't have full tool-calling wired this round.
+    # Pre-fetch web/news results when the user's intent looks current-events-ish.
+    should_search, kind = detect_search_intent(message)
+    enriched = message
+    if should_search:
+        search_query = await _gemini_extract_query(message)
+        print(f"🎯 Gemini extracted query: '{search_query}'")
+        search_results = await web_search(search_query, kind=kind, max_results=5)
+        enriched = (
+            f"{message}\n\n"
+            f"---\n"
+            f"📡 نتائج بحث حديثة من النت (استخدمها للإجابة وذكر المصادر باختصار):\n"
+            f"{search_results}"
+        )
+
     gemini_history = []
     for h in history:
+        content = h.get("content")
+        if not isinstance(content, str):
+            continue
         if h["role"] == "user":
-            gemini_history.append({"role": "user", "parts": [h["content"]]})
+            gemini_history.append({"role": "user", "parts": [content]})
         elif h["role"] == "assistant":
-            gemini_history.append({"role": "model", "parts": [h["content"]]})
+            gemini_history.append({"role": "model", "parts": [content]})
     chat = gemini_model_instance.start_chat(history=gemini_history)
-    response = chat.send_message(message)
+    response = await asyncio.to_thread(chat.send_message, enriched)
     return response.text
 
 # ============================================

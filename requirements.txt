@@ -18,3 +18,6 @@ openpyxl>=3.1.2
 
 # FFmpeg binary bundled with Python (no system install needed)
 imageio-ffmpeg>=0.5.0
+
+# Web/news search (DuckDuckGo, no API key required)
+ddgs>=9.0.0

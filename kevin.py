@@ -12,6 +12,7 @@ Renamed from "Jarvis" to "Kevin" per user preference.
 """
 
 import os
+import sys
 import asyncio
 import tempfile
 import json
@@ -23,6 +24,13 @@ import secrets
 import base64
 from datetime import datetime
 from pathlib import Path
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # ============================================
 # Load .env file

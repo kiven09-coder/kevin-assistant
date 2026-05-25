@@ -16,5 +16,5 @@ edge-tts>=6.1.10
 # Knowledge base (Excel parsing)
 openpyxl>=3.1.2
 
-# Audio processing dependency for Whisper
-ffmpeg-python>=0.2.0
+# FFmpeg binary bundled with Python (no system install needed)
+imageio-ffmpeg>=0.5.0

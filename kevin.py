@@ -60,6 +60,33 @@ import uvicorn
 from anthropic import Anthropic
 import google.generativeai as genai
 
+# ============================================
+# Resolve FFmpeg binary (Whisper requires it on PATH)
+# ============================================
+def _setup_ffmpeg():
+    try:
+        import shutil
+        import imageio_ffmpeg
+        src = imageio_ffmpeg.get_ffmpeg_exe()
+        if not src or not os.path.exists(src):
+            return
+        cache = Path.home() / ".kevin_cache"
+        cache.mkdir(exist_ok=True)
+        target = cache / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
+        src_size = Path(src).stat().st_size
+        if not target.exists() or target.stat().st_size != src_size:
+            shutil.copy(src, target)
+            if sys.platform != "win32":
+                os.chmod(target, 0o755)
+        os.environ["PATH"] = str(cache) + os.pathsep + os.environ.get("PATH", "")
+        print(f"✅ FFmpeg جاهز: {target}")
+    except ImportError:
+        print("⚠️ imageio-ffmpeg مش متنصبة. شغل: pip install imageio-ffmpeg")
+    except Exception as e:
+        print(f"⚠️ مشكلة في تجهيز FFmpeg: {e}")
+
+_setup_ffmpeg()
+
 import whisper
 import edge_tts
 

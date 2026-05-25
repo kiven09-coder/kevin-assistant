@@ -63,12 +63,43 @@ import google.generativeai as genai
 # ============================================
 # Resolve FFmpeg binary (Whisper requires it on PATH)
 # ============================================
+def _ensure_imageio_ffmpeg():
+    """Import imageio_ffmpeg; if missing, auto-install via pip and retry once."""
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg
+    except ImportError:
+        pass
+    print("⏬ imageio-ffmpeg مش موجودة - جاري تنصيبها أوتوماتيك (مرة واحدة)...")
+    import subprocess
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet", "imageio-ffmpeg>=0.5.0"],
+            timeout=300,
+        )
+    except Exception as e:
+        print(f"❌ فشل تنصيب imageio-ffmpeg: {e}")
+        return None
+    try:
+        import importlib
+        import imageio_ffmpeg
+        importlib.invalidate_caches()
+        print("✅ imageio-ffmpeg اتنصبت بنجاح")
+        return imageio_ffmpeg
+    except ImportError as e:
+        print(f"❌ لسة مش قادر يـ import بعد التنصيب: {e}")
+        return None
+
 def _setup_ffmpeg():
     try:
         import shutil
-        import imageio_ffmpeg
+        imageio_ffmpeg = _ensure_imageio_ffmpeg()
+        if imageio_ffmpeg is None:
+            print("⚠️ هـ Whisper مش هيشتغل لحد ما FFmpeg يكون متوفر. شغل يدوياً: pip install imageio-ffmpeg")
+            return
         src = imageio_ffmpeg.get_ffmpeg_exe()
         if not src or not os.path.exists(src):
+            print(f"⚠️ ffmpeg binary مش موجود في: {src}")
             return
         cache = Path.home() / ".kevin_cache"
         cache.mkdir(exist_ok=True)
@@ -79,11 +110,18 @@ def _setup_ffmpeg():
             if sys.platform != "win32":
                 os.chmod(target, 0o755)
         os.environ["PATH"] = str(cache) + os.pathsep + os.environ.get("PATH", "")
-        print(f"✅ FFmpeg جاهز: {target}")
-    except ImportError:
-        print("⚠️ imageio-ffmpeg مش متنصبة. شغل: pip install imageio-ffmpeg")
+        # Verify ffmpeg is actually callable now (definitive check)
+        try:
+            import subprocess
+            subprocess.run(
+                [str(target), "-version"],
+                capture_output=True, timeout=5, check=True,
+            )
+            print(f"✅ FFmpeg جاهز ومـ verified: {target}")
+        except Exception as e:
+            print(f"⚠️ FFmpeg متنصب بس مش قادر يشتغل: {e}")
     except Exception as e:
-        print(f"⚠️ مشكلة في تجهيز FFmpeg: {e}")
+        print(f"⚠️ مشكلة في تجهيز FFmpeg: {type(e).__name__}: {e}")
 
 _setup_ffmpeg()
 

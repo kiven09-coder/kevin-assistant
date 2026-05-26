@@ -21,3 +21,6 @@ imageio-ffmpeg>=0.5.0
 
 # Web/news search (DuckDuckGo, no API key required)
 ddgs>=9.0.0
+
+# Timezone data (Windows needs this for zoneinfo to find IANA zones)
+tzdata>=2024.1

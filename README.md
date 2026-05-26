@@ -1,133 +1,178 @@
-# 🤖 Kevin — Personal Arabic AI Assistant
+# 🤖 Kiven — Personal Arabic AI Assistant
 
-> **Public repo, private access.** Anyone can read the code, but only the owner with the password can run it.
+> Jarvis-style multimodal assistant. Public code, private access — only the owner with the password can run it.
 
-Personal AI assistant with Arabic voice recognition, dual AI providers (Claude + Gemini), Arabic text-to-speech, and an Excel-powered knowledge base.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB.svg)](https://www.python.org/)
+[![Arabic](https://img.shields.io/badge/Language-عربي_مصري-success.svg)](#)
+[![Architecture: HuggingGPT-style](https://img.shields.io/badge/Architecture-HuggingGPT--style-purple.svg)](#)
 
 ---
 
 ## 🇪🇬 بالعربي
 
-كيفن مساعد ذكي شخصي بيتكلم عربي مصري، بيفهم صوتك وبيرد عليك بصوت، وعنده قاعدة معرفة من ملفات Excel.
+كيفن (Kiven) مساعد شخصي ذكي بيتكلم عربي مصري، بيفهم صوتك ويرد عليك بصوت، بيبحث في النت، بيولّد صور، بيفتكر معلوماتك، وبيستخدم أكتر من موديل AI ذكي زي Jarvis.
 
-### المميزات
-- 🎙️ التعرف على الكلام بالعربية (Whisper)
-- 🧠 ذكاء اصطناعي مزدوج: Claude + Gemini
-- 🔊 رد صوتي بالعربية (Edge-TTS)
-- 📚 قاعدة معرفة من ملفات Excel
-- 🔒 محمي بكلمة مرور — مفيش حد يقدر يشغّله غير المالك
-- 💬 ذاكرة محادثة دائمة
+### ⚡ المميزات
 
-### التشغيل بسرعة
-```powershell
-# 1. تنصيب المتطلبات
-pip install -r requirements.txt
-
-# 2. تجهيز ملف .env
-copy env.example .env
-# عدّل .env وحط فيه مفاتيحك وكلمة المرور
-
-# 3. تشغيل كيفن
-python kevin.py
-```
-
-افتح المتصفح على `http://localhost:8000` وادخل كلمة المرور.
+- 🎙️ **صوت عربي**: Whisper للفهم + Edge-TTS للرد (لهجة مصرية)
+- 🧠 **عقلين AI**: Claude (ذكي + tool use) + Gemini (سريع + مجاني)
+- 🔧 **9 أدوات احترافية**:
+  - 🌐 `web_search` — أخبار وبحث (DuckDuckGo)
+  - 🎨 `generate_image` — توليد صور (Pollinations/Flux)
+  - 🧠 `remember` / `recall` / `forget` — ذاكرة دائمة
+  - 🕒 `get_current_time` — الوقت والتاريخ
+  - 🌤️ `get_weather` — الطقس (Open-Meteo)
+  - 🧮 `calculate` — حسابات دقيقة
+- 📚 **قاعدة معرفة** من ملفات Excel
+- 🔒 **محمي بـ password** — HMAC-signed sessions
+- 💾 **ذاكرة دائمة** بين الجلسات
+- 📱 **واجهة web** ترد على اللابتوب والموبايل
 
 ---
 
 ## 🇬🇧 English
 
-### Features
-- 🎙️ Arabic speech recognition (Whisper)
-- 🧠 Dual AI: Claude + Gemini (switchable)
-- 🔊 Arabic text-to-speech (Edge-TTS)
-- 📚 Excel-powered knowledge base
-- 🔒 Password-gated — public code, private access
-- 💬 Persistent conversation history
-- 📱 Responsive UI works on phone and laptop
+Kiven is a Jarvis-style personal AI assistant that speaks Egyptian Arabic, listens through your microphone, replies with voice, searches the web, generates images, remembers your facts, and orchestrates multiple AI models — all behind a password gate.
 
-### Tech Stack
-- **Backend:** FastAPI + uvicorn
-- **STT:** OpenAI Whisper (local, no API key)
-- **TTS:** Microsoft Edge TTS (free)
-- **LLM:** Anthropic Claude / Google Gemini
-- **Auth:** HMAC-signed cookies, password-gated
+### Architecture
+
+```
+                    ┌─────────────┐
+                    │   Browser   │  (web UI, Arabic RTL, password gate)
+                    └──────┬──────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │   FastAPI   │  (auth, routing, sessions)
+                    └──────┬──────┘
+                           │
+            ┌──────────────┼──────────────┐
+            ▼              ▼              ▼
+      ┌─────────┐    ┌──────────┐   ┌──────────┐
+      │ Whisper │    │  Edge    │   │   LLM    │
+      │  (STT)  │    │  -TTS    │   │ Router   │
+      └─────────┘    └──────────┘   └────┬─────┘
+                                         │
+                              ┌──────────┴──────────┐
+                              ▼                     ▼
+                        ┌──────────┐         ┌──────────┐
+                        │  Claude  │         │  Gemini  │
+                        │ (tools)  │         │(fallback)│
+                        └────┬─────┘         └──────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ TOOLS_REGISTRY  │  (HuggingGPT-style)
+                    └────────┬────────┘
+                             │
+       ┌─────────────────────┼─────────────────────┐
+       ▼                     ▼                     ▼
+ ┌──────────┐         ┌──────────┐         ┌──────────┐
+ │  search  │         │   image  │         │  memory  │
+ │   (DDG)  │         │ (Flux)   │         │  (JSON)  │
+ └──────────┘         └──────────┘         └──────────┘
+       ▼                     ▼                     ▼
+ ┌──────────┐         ┌──────────┐         ┌──────────┐
+ │   time   │         │  weather │         │   calc   │
+ │ (ZoneInfo)│        │(OpenMeteo)│        │  (AST)   │
+ └──────────┘         └──────────┘         └──────────┘
+```
+
+The LLM is the **controller**. The `TOOLS_REGISTRY` is the **model catalog**. Same architecture as Microsoft's HuggingGPT/JARVIS — just lighter, faster, Arabic-first.
 
 ---
 
-## 🛠️ Setup
+## 🚀 Quick Start
 
-### 1. Prerequisites
+### Prerequisites
 - Python 3.10+
-- [FFmpeg](https://ffmpeg.org/download.html) (required by Whisper)
-- A Gemini API key (free): https://aistudio.google.com/apikey
-- Optionally, an Anthropic API key: https://console.anthropic.com
+- A Gemini API key (FREE): https://aistudio.google.com/apikey
+- Optionally, an Anthropic Claude API key: https://console.anthropic.com
 
-### 2. Install
+### Install & Run
+
 ```bash
-git clone https://github.com/YOUR_USERNAME/kevin-assistant.git
+git clone https://github.com/kiven09-coder/kevin-assistant.git
 cd kevin-assistant
 pip install -r requirements.txt
-```
-
-### 3. Configure
-```bash
 cp env.example .env       # macOS / Linux
 copy env.example .env     # Windows
-```
-
-Edit `.env` and set:
-```env
-GEMINI_API_KEY=your_real_gemini_key
-ANTHROPIC_API_KEY=your_real_anthropic_key   # optional
-KEVIN_PASSWORD=pick-a-strong-password-here
-KEVIN_SESSION_SECRET=any-random-32-byte-string
-```
-
-Generate a strong password and session secret:
-```bash
-python -c "import secrets,string; print(''.join(secrets.choice(string.ascii_letters+string.digits+'!@#$%^&*') for _ in range(24)))"
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-### 4. Add Your Knowledge Base (Optional)
-Drop any `.xlsx` files into `upload/data/`. Kevin will read all sheets and use them to answer your questions.
-
-### 5. Run
-```bash
+# Edit .env: fill keys + set a strong KIVEN/KEVIN_PASSWORD
 python kevin.py
 ```
 
-Then open `http://localhost:8000`. You'll be redirected to a login screen — enter your password and you're in. Sessions last 30 days.
+Then open `http://localhost:8000`, enter your password, and start talking (text or voice).
+
+> **No FFmpeg system install needed.** Kiven auto-bootstraps a portable ffmpeg via `imageio-ffmpeg` on first run.
+
+### Configuration (`.env`)
+
+```env
+GEMINI_API_KEY=AIzaSy...        # free at aistudio.google.com
+ANTHROPIC_API_KEY=sk-ant-...    # optional, console.anthropic.com
+KEVIN_PASSWORD=YourStrongPass    # change this!
+KEVIN_SESSION_SECRET=...         # python -c "import secrets; print(secrets.token_urlsafe(32))"
+HOST=0.0.0.0
+PORT=8000
+```
+
+### Knowledge Base
+
+Drop `.xlsx` files into `upload/data/`. Kiven reads them on startup and uses them in answers.
 
 ---
 
-## 🔒 Security Notes
+## 🔧 Tools Reference
 
-- **Never commit `.env`** — it's in `.gitignore`. If you accidentally push a real key, rotate it immediately.
-- Login uses HMAC-SHA256 signed cookies — no plaintext password ever crosses the wire after the initial POST.
-- Passwords are compared with `hmac.compare_digest` (constant-time).
-- If you deploy this beyond `localhost`, set `secure=True` on the cookie and put TLS in front.
-- The Excel knowledge base may contain sensitive data — review what you commit.
+| Tool | What it does | Backend |
+|------|--------------|---------|
+| `web_search` | News + general search | DuckDuckGo (`ddgs`) — no key |
+| `generate_image` | Text-to-image | Pollinations.ai / Flux — no key |
+| `remember(fact)` | Store a fact permanently | Local JSON store |
+| `recall(query)` | Search remembered facts | Local JSON store |
+| `forget(id)` | Delete a remembered fact | Local JSON store |
+| `get_current_time` | Now + day/date | Python `zoneinfo` |
+| `get_weather(city)` | Current weather | Open-Meteo — no key |
+| `calculate(expr)` | Safe math eval | AST whitelist |
+
+Adding a tool is one entry in `TOOLS_REGISTRY` — the LLM picks it up automatically next reload.
 
 ---
 
-## 📁 Project Layout
+## 🔒 Security
 
-```
-kevin-assistant/
-├── kevin.py                  # Main app (FastAPI + UI + auth + AI routing)
-├── requirements.txt          # Python dependencies
-├── env.example               # Template for .env
-├── .env                      # Your secrets (gitignored)
-├── .gitignore
-├── README.md
-├── LICENSE
-└── upload/
-    ├── data/                 # Your Excel knowledge base lives here
-    │   └── *.xlsx
-    └── archive/              # Backups and old versions (gitignored if you want)
-```
+- `.env` is gitignored — never commit secrets
+- Password compared with `hmac.compare_digest` (constant-time)
+- Sessions are HMAC-SHA256 signed cookies (30-day TTL, httponly, samesite=lax)
+- Memory file (`kiven_memory.json`) is gitignored
+- Markdown in chat is HTML-escaped first, only safe tags injected (no XSS)
+
+If you deploy beyond localhost: terminate TLS, set `secure=True` on the cookie, rotate password.
+
+---
+
+## 🗺️ Roadmap
+
+### Done
+- [x] Arabic voice (STT + TTS)
+- [x] Claude tool-use loop
+- [x] Web search
+- [x] Image generation
+- [x] Persistent memory
+- [x] Time / Weather / Calculator
+- [x] Excel knowledge base
+- [x] Password-gated web UI
+- [x] Markdown rendering with image embeds
+
+### Next phases
+- [ ] Microsoft Graph (Outlook for work email)
+- [ ] Google OAuth (Gmail personal)
+- [ ] OneDrive / Google Drive
+- [ ] PDF analysis
+- [ ] Image understanding (vision)
+- [ ] Local LLM option (Ollama + Qwen 2.5)
+- [ ] Wake word ("يا كيفن") — desktop only
 
 ---
 
@@ -135,4 +180,4 @@ kevin-assistant/
 
 MIT — see [LICENSE](LICENSE).
 
-The code is public, but the access is private. Fork it, learn from it, build your own Kevin. Just set your own password.
+Public code, private runtime. Fork it, learn from it, build your own. Just set your own password and keys.

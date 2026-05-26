@@ -17,6 +17,7 @@ api_*.txt
 # ============================================
 conversation_history.json
 knowledge_base.json
+kiven_memory.json
 *.session
 sessions/
 

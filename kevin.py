@@ -1519,20 +1519,34 @@ async def chat_with_claude(message, history):
 
     return "[Claude تجاوز عدد محاولات استدعاء الأدوات]"
 
-async def _gemini_extract_query(message: str) -> str:
-    """Ask Gemini to compress the user's request into a 2-5 word search query."""
-    try:
-        prompt = (
-            "Extract a concise search query (2-5 keywords, no explanation) "
-            "from the user's request below. Output ONLY the query, nothing else.\n\n"
-            f"User: {message}\n\nSearch query:"
-        )
-        resp = await asyncio.to_thread(gemini_model_instance.generate_content, prompt)
-        query = (resp.text or "").strip().strip('"\'').splitlines()[0][:120]
-        return query or message[:80]
-    except Exception as e:
-        print(f"⚠️ Gemini query extraction failed: {e}")
-        return message[:80]
+# Arabic command/filler words that should be stripped before sending to DDG.
+_SEARCH_NOISE_AR = [
+    "اعطيني", "اعطنى", "ادينى", "ادّيني", "هاتلي", "هات لي", "وريني", "قولي",
+    "ايه", "إيه", "كل", "بسرعة", "بسرعه", "كده", "كدا", "كدة",
+    "ابحث عن", "ابحثلي", "ابحث لي", "ابحث في النت", "ابحث",
+    "في النت", "على النت", "على الإنترنت", "على الانترنت",
+    "آخر", "اخر", "أحدث", "احدث", "آخر الـ", "أخر",
+    "اللي", "اللى", "النهارده", "النهاردة",
+    "لو سمحت", "من فضلك", "ممكن", "ياريت", "يا ريت",
+    "في نقاط", "نقاط", "مختصرة", "مختصره", "بإيجاز", "ملخص",
+]
+_SEARCH_NOISE_EN = ["please", "can you", "give me", "show me", "tell me about", "what are"]
+
+def clean_search_query(message: str) -> str:
+    """Strip command/filler words so DDG gets the actual topic."""
+    q = message.strip()
+    low = q.lower()
+    for w in _SEARCH_NOISE_EN:
+        if w in low:
+            i = low.index(w)
+            q = (q[:i] + " " + q[i+len(w):]).strip()
+            low = q.lower()
+    for w in _SEARCH_NOISE_AR:
+        q = q.replace(w, " ")
+    # Collapse whitespace
+    q = " ".join(q.split())
+    # If we stripped everything, fall back to the original
+    return q if len(q) >= 3 else message.strip()[:120]
 
 async def chat_with_gemini(message, history):
     if not gemini_model_instance:
@@ -1616,15 +1630,32 @@ async def chat_with_gemini(message, history):
     else:
         should_search, kind = detect_search_intent(message)
         if should_search:
-            search_query = await _gemini_extract_query(message)
-            print(f"🎯 Gemini extracted query: '{search_query}'")
+            search_query = clean_search_query(message)
+            print(f"🔍 Cleaned search query: '{search_query}'")
             search_results = await web_search(search_query, kind=kind, max_results=5)
-            enriched = (
-                f"{message}\n\n"
-                f"---\n"
-                f"📡 نتائج بحث حديثة من النت (استخدمها للإجابة وذكر المصادر باختصار):\n"
-                f"{search_results}"
+            # If search itself errored or returned nothing useful, don't pretend it worked
+            looks_failed = (
+                search_results.startswith("خطأ")
+                or "مفيش نتائج" in search_results
+                or len(search_results.strip()) < 30
             )
+            if looks_failed:
+                enriched = (
+                    f"{message}\n\n"
+                    f"---\n"
+                    f"⚠️ ملاحظة داخلية: البحث في النت رجع فاضي للـ query '{search_query}'. "
+                    f"رد على المستخدم بأمانة بأنك مش لاقي نتائج محدّثة، وقدّم اللي عندك من تدريبك "
+                    f"مع توضيح إن المعلومة قد تكون قديمة. **متقولش 'مشكلة تقنية'** لأن مفيش مشكلة، "
+                    f"النت بس مرجعش حاجة."
+                )
+            else:
+                enriched = (
+                    f"{message}\n\n"
+                    f"---\n"
+                    f"📡 نتائج بحث حديثة من النت — استخدم البيانات دي للإجابة "
+                    f"واذكر المصادر باختصار. متجاوبش من تدريبك القديم — استخدم النتائج دي حصرياً:\n\n"
+                    f"{search_results}"
+                )
 
     gemini_history = []
     for h in history:

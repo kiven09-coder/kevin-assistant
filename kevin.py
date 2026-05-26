@@ -154,7 +154,7 @@ SESSION_COOKIE_NAME = "kevin_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
 CLAUDE_MODEL = "claude-sonnet-4-5"
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.0-flash"  # 200 req/day free tier vs 20 for 2.5-flash
 WHISPER_MODEL = "medium"
 
 ARABIC_VOICES = {
@@ -476,6 +476,44 @@ async def get_weather(city: str) -> str:
     except Exception as e:
         print(f"❌ Weather error: {type(e).__name__}: {e}")
         return f"خطأ في جلب الطقس: {type(e).__name__}: {str(e)[:120]}"
+
+# Arabic city name → Open-Meteo geocoding key. Used to skip an LLM call.
+ARABIC_CITY_MAP = {
+    "القاهرة": "Cairo", "القاهره": "Cairo", "كايرو": "Cairo",
+    "الإسكندرية": "Alexandria", "الاسكندرية": "Alexandria",
+    "اسكندرية": "Alexandria", "إسكندرية": "Alexandria",
+    "الجيزة": "Giza", "جيزة": "Giza", "الجيزه": "Giza",
+    "شرم الشيخ": "Sharm El Sheikh", "شرم": "Sharm El Sheikh",
+    "الغردقة": "Hurghada", "غردقة": "Hurghada", "الغردقه": "Hurghada",
+    "المنصورة": "Mansoura", "منصورة": "Mansoura",
+    "طنطا": "Tanta", "الزقازيق": "Zagazig", "بنها": "Banha",
+    "الأقصر": "Luxor", "اقصر": "Luxor", "الاقصر": "Luxor",
+    "أسوان": "Aswan", "اسوان": "Aswan",
+    "بورسعيد": "Port Said", "بور سعيد": "Port Said",
+    "السويس": "Suez", "الإسماعيلية": "Ismailia", "إسماعيلية": "Ismailia",
+    "أسيوط": "Asyut", "اسيوط": "Asyut",
+    "المنيا": "Minya", "بني سويف": "Beni Suef",
+    "دبي": "Dubai", "الرياض": "Riyadh", "رياض": "Riyadh",
+    "جدة": "Jeddah", "جده": "Jeddah", "مكة": "Mecca", "المدينة": "Medina",
+    "بيروت": "Beirut", "عمان": "Amman", "دمشق": "Damascus", "بغداد": "Baghdad",
+    "الدوحة": "Doha", "دوحة": "Doha",
+    "أبوظبي": "Abu Dhabi", "ابوظبي": "Abu Dhabi", "أبو ظبي": "Abu Dhabi",
+    "الكويت": "Kuwait", "المنامة": "Manama", "البحرين": "Manama", "مسقط": "Muscat",
+    "تونس": "Tunis", "الجزائر": "Algiers",
+    "الرباط": "Rabat", "الدار البيضاء": "Casablanca", "كازابلانكا": "Casablanca",
+    "الخرطوم": "Khartoum",
+}
+
+def extract_cities_from_message(message: str) -> list[str]:
+    """Find all known Arabic city mentions in a message. Falls back to ['Cairo']."""
+    found = []
+    # Sort by length desc so longer matches win (e.g. "شرم الشيخ" before "شرم")
+    for ar in sorted(ARABIC_CITY_MAP.keys(), key=len, reverse=True):
+        if ar in message:
+            en = ARABIC_CITY_MAP[ar]
+            if en not in found:
+                found.append(en)
+    return found or ["Cairo"]
 
 # ============================================
 # Calculator (safe AST eval)
@@ -1516,23 +1554,21 @@ async def chat_with_gemini(message, history):
             f"🕒 الوقت الحالي الفعلي (استخدم البيانات دي حصرياً ومتـ hallucinate-ش):\n{t}\n"
             f"ردّ بالمعلومات دي مباشرة."
         )
-    # Weather intent — extract city via Gemini, fetch, inject
+    # Weather intent — parse city names locally (no LLM call) and support multi-city
     elif detect_weather_intent(message):
-        try:
-            city_req = (
-                "Extract the city name (English) from this Arabic/English request. "
-                "Output only the city name. If unclear, output 'Cairo'.\n\n"
-                f"Request: {message}\n\nCity:"
-            )
-            cr = await asyncio.to_thread(gemini_model_instance.generate_content, city_req)
-            city = (cr.text or "Cairo").strip().splitlines()[0][:50] or "Cairo"
-        except Exception:
-            city = "Cairo"
-        w = await get_weather(city)
+        cities = extract_cities_from_message(message)
+        if len(cities) > 5:
+            cities = cities[:5]
+        # Fetch weather for each city in parallel
+        results = await asyncio.gather(*[get_weather(c) for c in cities], return_exceptions=True)
+        joined = "\n\n".join(
+            r if isinstance(r, str) else f"خطأ في {c}: {r}"
+            for c, r in zip(cities, results)
+        )
         enriched = (
             f"{enriched}\n\n---\n"
-            f"🌤️ الطقس الفعلي (استخدم البيانات دي حصرياً):\n{w}\n"
-            f"ردّ بالمعلومات دي بأسلوب طبيعي."
+            f"🌤️ الطقس الفعلي (استخدم البيانات دي حصرياً):\n{joined}\n"
+            f"ردّ بأسلوب طبيعي. لو فيه أكتر من مدينة، اعرضهم بالترتيب."
         )
     # Calc intent — extract math expression, run safely, inject
     elif detect_calc_intent(message):
@@ -1599,9 +1635,26 @@ async def chat_with_gemini(message, history):
             gemini_history.append({"role": "user", "parts": [content]})
         elif h["role"] == "assistant":
             gemini_history.append({"role": "model", "parts": [content]})
-    chat = gemini_model_instance.start_chat(history=gemini_history)
-    response = await asyncio.to_thread(chat.send_message, enriched)
-    return response.text
+    try:
+        chat = gemini_model_instance.start_chat(history=gemini_history)
+        response = await asyncio.to_thread(chat.send_message, enriched)
+        return response.text
+    except Exception as e:
+        err_text = str(e)
+        is_rate_limit = ("429" in err_text or "quota" in err_text.lower()
+                         or "rate" in err_text.lower())
+        if is_rate_limit and claude_client:
+            print(f"⚠️ Gemini rate-limited → fallback to Claude")
+            try:
+                # Use the enriched message (with injected tool results) for context
+                return await chat_with_claude(enriched, history)
+            except Exception as ce:
+                ce_text = str(ce)
+                if "429" in ce_text:
+                    return ("⚠️ كلا الـ AI providers (Gemini و Claude) وصلوا للحد الأقصى. "
+                            "استني دقيقة أو غيّر للـ Claude يدوياً من الزرار فوق.")
+                raise
+        raise
 
 # ============================================
 # ENDPOINTS

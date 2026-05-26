@@ -298,6 +298,11 @@ def _search_sync(query: str, kind: str, max_results: int) -> list:
             return list(ddgs.news(query, max_results=max_results, safesearch="off"))
         return list(ddgs.text(query, max_results=max_results, safesearch="off"))
 
+def _video_search_sync(query: str, max_results: int) -> list:
+    from ddgs import DDGS
+    with DDGS() as ddgs:
+        return list(ddgs.videos(query, max_results=max_results, safesearch="off"))
+
 async def web_search(query: str, kind: str = "web", max_results: int = 5) -> str:
     """Search the web or news headlines via DuckDuckGo. No API key required."""
     try:
@@ -311,6 +316,41 @@ async def web_search(query: str, kind: str = "web", max_results: int = 5) -> str
     except Exception as e:
         print(f"❌ Web search error: {type(e).__name__}: {e}")
         return f"خطأ في البحث: {type(e).__name__}: {str(e)[:200]}"
+
+async def video_search(query: str, max_results: int = 4) -> str:
+    """Search videos (YouTube, Vimeo, etc.) via DuckDuckGo. Returns markdown with thumbnails."""
+    try:
+        max_results = max(1, min(int(max_results), 8))
+        query = (query or "").strip()
+        if not query:
+            return "خطأ: لازم تحدد كلمة البحث."
+        print(f"📺 Video search: '{query}' (max {max_results})")
+        results = await asyncio.to_thread(_video_search_sync, query, max_results)
+        if not results:
+            return f"مفيش فيديوهات لـ '{query}'."
+        lines = [f"📺 فيديوهات عن '{query}':\n"]
+        for i, r in enumerate(results, 1):
+            title = (r.get("title") or "").strip()
+            url = (r.get("content") or r.get("url") or "").strip()
+            thumb = (r.get("image") or "").strip()
+            duration = (r.get("duration") or "").strip()
+            publisher = (r.get("publisher") or "").strip()
+            uploader = (r.get("uploader") or "").strip()
+            chunk = f"### {i}. {title}"
+            if duration or publisher or uploader:
+                meta = " · ".join(x for x in [duration, publisher or uploader] if x)
+                chunk += f"\n*{meta}*"
+            if thumb:
+                chunk += f"\n\n![{title}]({thumb})"
+            if url:
+                chunk += f"\n\n▶️ [مشاهدة الفيديو]({url})"
+            lines.append(chunk)
+        return "\n\n---\n\n".join(lines)
+    except ImportError:
+        return "خطأ: حزمة ddgs مش متنصبة."
+    except Exception as e:
+        print(f"❌ Video search error: {type(e).__name__}: {e}")
+        return f"خطأ في بحث الفيديو: {type(e).__name__}: {str(e)[:200]}"
 
 # ============================================
 # Persistent Memory (JSON-backed, no DB)
@@ -736,7 +776,31 @@ TOOLS_REGISTRY = {
         },
         "handler": calculate,
     },
+    "video_search": {
+        "name": "video_search",
+        "description": (
+            "ابحث عن فيديوهات (YouTube، Vimeo، إلخ) عبر DuckDuckGo. "
+            "استخدمها لما المستخدم يطلب فيديو، شرح بالفيديو، tutorial، أو يقول 'وريني فيديو'. "
+            "النتائج بترجع كـ Markdown مع thumbnails وروابط. اعرضها كما هي في ردك."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query (English yields more results)."},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 8, "description": "Default 4."},
+            },
+            "required": ["query"],
+        },
+        "handler": video_search,
+    },
 }
+
+VIDEO_KEYWORDS_AR = ["فيديو", "فيديوهات", "وريني", "اعرضلي", "تعليم بالفيديو", "tutorial"]
+VIDEO_KEYWORDS_EN = ["video", "videos", "youtube", "tutorial", "watch"]
+
+def detect_video_intent(message: str) -> bool:
+    low = message.lower()
+    return any(k in message for k in VIDEO_KEYWORDS_AR) or any(k in low for k in VIDEO_KEYWORDS_EN)
 
 def list_claude_tools():
     return [
@@ -857,7 +921,7 @@ HTML_UI = f"""<!DOCTYPE html>
         }}
         body {{ font-family: 'Cairo', sans-serif; background: var(--bg-deep); color: var(--text); min-height: 100vh; overflow: hidden; }}
         body::before {{ content: ''; position: fixed; inset: 0; background: radial-gradient(circle at 20% 30%, rgba(0,212,255,0.08) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(255,107,53,0.05) 0%, transparent 50%); pointer-events: none; z-index: 0; }}
-        .container {{ position: relative; z-index: 1; height: 100vh; display: flex; flex-direction: column; max-width: 600px; margin: 0 auto; }}
+        .container {{ position: relative; z-index: 1; height: 100vh; display: flex; flex-direction: column; max-width: 1280px; width: 100%; margin: 0 auto; }}
         .header {{ padding: 16px 20px; background: rgba(14,26,46,0.8); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(0,212,255,0.2); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }}
         .logo-section {{ display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }}
         .arc-reactor {{ width: 40px; height: 40px; border-radius: 50%; background: radial-gradient(circle, var(--accent) 0%, rgba(0,212,255,0.2) 70%); box-shadow: 0 0 20px var(--accent-glow), inset 0 0 10px rgba(255,255,255,0.3); animation: pulse 3s ease-in-out infinite; position: relative; flex-shrink: 0; }}
@@ -869,11 +933,14 @@ HTML_UI = f"""<!DOCTYPE html>
         @keyframes blink {{ 0%,100% {{ opacity: 1; }} 50% {{ opacity: 0.4; }} }}
 
         /* Controls bar - moved to TOP, replaces old provider-bar and header-actions */
-        .controls-bar {{ display: flex; gap: 6px; align-items: center; flex-shrink: 0; }}
-        .provider-btn {{ padding: 8px 12px; border-radius: 10px; background: rgba(0,212,255,0.05); border: 1px solid rgba(0,212,255,0.15); color: var(--text-dim); font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }}
+        .controls-bar {{ display: flex; gap: 6px; align-items: center; flex-shrink: 0; flex-wrap: wrap; }}
+        .provider-btn {{ padding: 8px 10px; border-radius: 10px; background: rgba(0,212,255,0.05); border: 1px solid rgba(0,212,255,0.15); color: var(--text-dim); font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; min-width: 38px; }}
         .provider-btn.active {{ background: rgba(0,212,255,0.15); border-color: var(--accent); color: var(--accent); box-shadow: 0 0 12px rgba(0,212,255,0.2); }}
         .provider-btn:disabled {{ opacity: 0.4; cursor: not-allowed; }}
         .icon-btn {{ width: 36px; height: 36px; border-radius: 10px; background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.2); color: var(--accent); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }}
+        .icon-btn.muted {{ background: rgba(255,107,53,0.15); border-color: var(--accent-warm); color: var(--accent-warm); }}
+        .voice-select {{ padding: 7px 10px; border-radius: 10px; background: rgba(0,212,255,0.05); border: 1px solid rgba(0,212,255,0.15); color: var(--text); font-family: inherit; font-size: 12px; cursor: pointer; outline: none; max-width: 150px; }}
+        .voice-select:focus {{ border-color: var(--accent); }}
 
         .chat-area {{ flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }}
         .message {{ max-width: 85%; padding: 12px 16px; border-radius: 18px; font-size: 15px; line-height: 1.6; word-wrap: break-word; }}
@@ -924,8 +991,17 @@ HTML_UI = f"""<!DOCTYPE html>
                 </div>
             </div>
             <div class="controls-bar">
-                <button class="provider-btn active" id="btn-claude" onclick="switchProvider('claude')">🧠 Claude</button>
-                <button class="provider-btn" id="btn-gemini" onclick="switchProvider('gemini')">✨ Gemini</button>
+                <button class="provider-btn active" id="btn-claude" onclick="switchProvider('claude')" title="Claude">🧠</button>
+                <button class="provider-btn" id="btn-gemini" onclick="switchProvider('gemini')" title="Gemini">✨</button>
+                <button class="provider-btn" id="btn-consensus" onclick="toggleConsensus()" title="Consensus: Claude+Gemini يناقشوا">🤝</button>
+                <select class="voice-select" id="voice-select" onchange="changeVoice()" title="اختيار الصوت">
+                    <option value="shakir_egypt">♂️ شاكر — مصري</option>
+                    <option value="salma_egypt">♀️ سلمى — مصرية</option>
+                    <option value="hamed_saudi">♂️ حامد — سعودي</option>
+                    <option value="zariyah_saudi">♀️ زارية — سعودية</option>
+                    <option value="off">🔇 صامت</option>
+                </select>
+                <button class="icon-btn" id="btn-mute" onclick="toggleMute()" title="إيقاف الصوت الحالي">🔊</button>
                 <button class="icon-btn" onclick="clearChat()" title="مسح">🗑️</button>
                 <button class="icon-btn" onclick="doLogout()" title="خروج">🚪</button>
             </div>
@@ -956,7 +1032,11 @@ HTML_UI = f"""<!DOCTYPE html>
     <div class="toast" id="toast"></div>
     <script>
         const API_BASE = window.location.origin;
-        let currentProvider = 'gemini';
+        let currentProvider = localStorage.getItem('kiven_provider') || 'claude';
+        let currentVoice = localStorage.getItem('kiven_voice') || 'shakir_egypt';
+        let isMuted = localStorage.getItem('kiven_muted') === 'true';
+        let consensusMode = localStorage.getItem('kiven_consensus') === 'true';
+        let currentAudio = null;
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
@@ -964,7 +1044,53 @@ HTML_UI = f"""<!DOCTYPE html>
         let recordingStartTime = 0;
         let recordingTimer = null;
 
+        function changeVoice() {{
+            const sel = document.getElementById('voice-select');
+            currentVoice = sel.value;
+            localStorage.setItem('kiven_voice', currentVoice);
+            showToast(currentVoice === 'off' ? '🔇 الصوت متوقف' : '✅ صوت: ' + sel.options[sel.selectedIndex].text);
+            if (currentVoice === 'off' && currentAudio) {{ currentAudio.pause(); currentAudio = null; }}
+        }}
+
+        function toggleMute() {{
+            isMuted = !isMuted;
+            localStorage.setItem('kiven_muted', isMuted ? 'true' : 'false');
+            const btn = document.getElementById('btn-mute');
+            btn.textContent = isMuted ? '🔇' : '🔊';
+            btn.classList.toggle('muted', isMuted);
+            btn.title = isMuted ? 'الصوت مكتوم - اضغط للتشغيل' : 'إيقاف الصوت الحالي';
+            if (isMuted && currentAudio) {{
+                currentAudio.pause();
+                currentAudio = null;
+            }}
+            showToast(isMuted ? '🔇 الصوت مكتوم' : '🔊 الصوت شغّال');
+        }}
+
+        function toggleConsensus() {{
+            consensusMode = !consensusMode;
+            localStorage.setItem('kiven_consensus', consensusMode ? 'true' : 'false');
+            document.getElementById('btn-consensus').classList.toggle('active', consensusMode);
+            showToast(consensusMode ? '🤝 Consensus Mode تشغيل (أبطأ، أدق)' : 'Consensus متوقف');
+        }}
+
+        function stopCurrentAudio() {{
+            if (currentAudio) {{
+                try {{ currentAudio.pause(); }} catch(e) {{}}
+                currentAudio = null;
+            }}
+        }}
+
         window.addEventListener('load', async () => {{
+            // Restore UI state from localStorage
+            document.getElementById('voice-select').value = currentVoice;
+            document.getElementById('btn-mute').textContent = isMuted ? '🔇' : '🔊';
+            document.getElementById('btn-mute').classList.toggle('muted', isMuted);
+            document.getElementById('btn-consensus').classList.toggle('active', consensusMode);
+            document.querySelectorAll('.provider-btn').forEach(b => b.classList.remove('active'));
+            const btn = document.getElementById('btn-' + currentProvider);
+            if (btn) btn.classList.add('active');
+            if (consensusMode) document.getElementById('btn-consensus').classList.add('active');
+
             await checkStatus();
             const input = document.getElementById('text-input');
             input.addEventListener('input', () => {{ input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 100) + 'px'; }});
@@ -1010,6 +1136,7 @@ HTML_UI = f"""<!DOCTYPE html>
             if (!message) return;
             input.value = '';
             input.style.height = 'auto';
+            stopCurrentAudio();  // stop any ongoing TTS before new message
             if (!conversationStarted) {{ document.querySelector('.welcome')?.remove(); conversationStarted = true; }}
             addMessage('user', message);
             const typing = showTyping();
@@ -1017,14 +1144,18 @@ HTML_UI = f"""<!DOCTYPE html>
                 const res = await fetch(`${{API_BASE}}/api/chat`, {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{message, provider: currentProvider}})
+                    body: JSON.stringify({{
+                        message,
+                        provider: currentProvider,
+                        consensus: consensusMode,
+                    }})
                 }});
                 typing.remove();
                 if (res.status === 401) {{ window.location.href = '/login'; return; }}
                 if (!res.ok) {{ const err = await res.json(); throw new Error(err.detail || 'خطأ'); }}
                 const data = await res.json();
                 addMessage('bot', data.response);
-                speakText(data.response);
+                if (!isMuted && currentVoice !== 'off') speakText(data.response);
             }} catch (err) {{
                 typing.remove();
                 addMessage('bot', `❌ خطأ: ${{err.message}}`);
@@ -1087,23 +1218,27 @@ HTML_UI = f"""<!DOCTYPE html>
         }}
 
         async function speakText(text) {{
+            if (isMuted || currentVoice === 'off') return;
             try {{
                 const cleanText = text
-                    .replace(/!\\[[^\\]]*\\]\\([^)]+\\)/g, ' ')        // strip image markdown
-                    .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')      // strip link URLs, keep text
-                    .replace(/```[\\s\\S]*?```/g, ' ')                  // strip code blocks
-                    .replace(/^#+\\s+/gm, '')                           // strip header markers
-                    .replace(/^---+$/gm, ' ')                            // strip rules
-                    .replace(/[*_`#\\[\\]]/g, '');                       // strip remaining markdown chars
+                    .replace(/!\\[[^\\]]*\\]\\([^)]+\\)/g, ' ')
+                    .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')
+                    .replace(/```[\\s\\S]*?```/g, ' ')
+                    .replace(/^#+\\s+/gm, '')
+                    .replace(/^---+$/gm, ' ')
+                    .replace(/[*_`#\\[\\]]/g, '');
                 const res = await fetch(`${{API_BASE}}/api/speak`, {{
                     method: 'POST',
                     headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify({{text: cleanText.substring(0, 500), voice: 'shakir_egypt'}})
+                    body: JSON.stringify({{text: cleanText.substring(0, 500), voice: currentVoice}})
                 }});
                 if (!res.ok) return;
+                if (isMuted || currentVoice === 'off') return;  // could have changed during fetch
                 const blob = await res.blob();
-                const audio = new Audio(URL.createObjectURL(blob));
-                audio.play();
+                stopCurrentAudio();
+                currentAudio = new Audio(URL.createObjectURL(blob));
+                currentAudio.onended = () => {{ currentAudio = null; }};
+                await currentAudio.play();
             }} catch (err) {{ console.error('TTS error:', err); }}
         }}
 
@@ -1604,6 +1739,14 @@ async def chat_with_gemini(message, history):
                 f"🧮 نتيجة الحساب الدقيقة:\n{calc_result}\n"
                 f"اعرض الناتج بأسلوب طبيعي."
             )
+    elif detect_video_intent(message):
+        vid_query = clean_search_query(message)
+        vid_md = await video_search(vid_query, max_results=4)
+        enriched = (
+            f"{enriched}\n\n---\n"
+            f"📺 فيديوهات تم العثور عليها (اعرضها كما هي + كلمة افتتاحية بالعربية):\n\n"
+            f"{vid_md}"
+        )
     elif detect_image_intent(message):
         # Build an English prompt via Gemini, then generate image
         try:
@@ -1807,24 +1950,93 @@ async def transcribe_audio(audio: UploadFile = File(...), _auth: bool = Depends(
         except Exception:
             pass
 
+async def chat_with_consensus(message, history):
+    """Run Claude + Gemini in parallel, then have Claude synthesize a verified answer."""
+    if not (claude_client and gemini_model_instance):
+        raise HTTPException(status_code=503,
+            detail="Consensus mode محتاج Claude و Gemini الاتنين متاحين")
+
+    # Run both in parallel; tolerate one failing
+    claude_task = asyncio.create_task(chat_with_claude(message, history))
+    gemini_task = asyncio.create_task(chat_with_gemini(message, history))
+    claude_res, gemini_res = await asyncio.gather(
+        claude_task, gemini_task, return_exceptions=True
+    )
+
+    claude_text = claude_res if isinstance(claude_res, str) else f"[Claude فشل: {type(claude_res).__name__}]"
+    gemini_text = gemini_res if isinstance(gemini_res, str) else f"[Gemini فشل: {type(gemini_res).__name__}]"
+
+    # If both failed
+    if not isinstance(claude_res, str) and not isinstance(gemini_res, str):
+        return ("⚠️ Consensus فشل: الموديلين الاتنين رجعوا أخطاء.\n"
+                f"Claude: {claude_text}\n\nGemini: {gemini_text}")
+
+    # If one failed, return the other with a note (no synthesis needed)
+    if not isinstance(claude_res, str):
+        return f"{gemini_text}\n\n---\n*ℹ️ Claude مرجعش رد، ده رد Gemini وحده.*"
+    if not isinstance(gemini_res, str):
+        return f"{claude_text}\n\n---\n*ℹ️ Gemini مرجعش رد، ده رد Claude وحده.*"
+
+    # Both succeeded — synthesize via Claude
+    synth_messages = [{
+        "role": "user",
+        "content": (
+            f"سؤال المستخدم الأصلي:\n{message}\n\n"
+            f"---\n"
+            f"رد Claude:\n{claude_text}\n\n"
+            f"---\n"
+            f"رد Gemini:\n{gemini_text}\n\n"
+            f"---\n"
+            f"المهمة: قارن بين الردين وكوّن رد نهائي للمستخدم:\n"
+            f"1. لو متفقين تماماً → اطّلع رد واحد موحّد يجمع أحسن ما فيهم.\n"
+            f"2. لو فيه اختلاف بسيط → ادمج المعلومات.\n"
+            f"3. لو فيه تضارب جوهري → اعرض الاتنين بصراحة وقُل 'في تضارب' مع رأيك المرجح.\n"
+            f"4. احتفظ بكل الصور (Markdown ![...](...)) والروابط من الردين الأصليين.\n"
+            f"5. اذكر المصادر اللي ظهرت في أي رد منهم.\n"
+            f"ابدأ بـ '🤝' في أول الرد عشان المستخدم يعرف إنه consensus."
+        ),
+    }]
+    try:
+        synth = await asyncio.to_thread(
+            claude_client.messages.create,
+            model=CLAUDE_MODEL, max_tokens=2048,
+            system=("أنت محرر يراجع ردين من نموذجين مختلفين ويصدر رد نهائي موثوق "
+                    "للمستخدم. كن أمين في الإشارة لأي تضارب."),
+            messages=synth_messages,
+        )
+        parts = [b.text for b in synth.content if getattr(b, "type", None) == "text"]
+        result = "\n".join(p for p in parts if p)
+        return result or "[Synthesis رجع فاضي]"
+    except Exception as e:
+        # Synthesis failed — fall back to showing both side by side
+        return (f"🤝 **Consensus (بدون synthesis — Claude فشل في الدمج):**\n\n"
+                f"### 🧠 Claude\n{claude_text}\n\n"
+                f"### ✨ Gemini\n{gemini_text}")
+
 @app.post("/api/chat")
 async def chat(payload: dict, _auth: bool = Depends(require_auth)):
     message = payload.get("message", "").strip()
-    provider = payload.get("provider", "gemini")
+    provider = payload.get("provider", "claude")
+    consensus = bool(payload.get("consensus"))
     if not message:
         raise HTTPException(status_code=400, detail="رسالة فارغة")
     try:
-        if provider == "claude":
+        if consensus:
+            response_text = await chat_with_consensus(message, conversation_history)
+            effective_provider = "consensus"
+        elif provider == "claude":
             response_text = await chat_with_claude(message, conversation_history)
+            effective_provider = "claude"
         elif provider == "gemini":
             response_text = await chat_with_gemini(message, conversation_history)
+            effective_provider = "gemini"
         else:
             raise HTTPException(status_code=400, detail="مزود غير معروف")
         timestamp = datetime.now().isoformat()
-        conversation_history.append({"role": "user", "content": message, "timestamp": timestamp, "provider": provider})
-        conversation_history.append({"role": "assistant", "content": response_text, "timestamp": datetime.now().isoformat(), "provider": provider})
+        conversation_history.append({"role": "user", "content": message, "timestamp": timestamp, "provider": effective_provider})
+        conversation_history.append({"role": "assistant", "content": response_text, "timestamp": datetime.now().isoformat(), "provider": effective_provider})
         save_history(conversation_history)
-        return {"response": response_text, "provider": provider, "timestamp": timestamp}
+        return {"response": response_text, "provider": effective_provider, "timestamp": timestamp}
     except HTTPException:
         raise
     except Exception as e:

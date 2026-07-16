@@ -1873,7 +1873,9 @@ async def api_login(payload: dict, response: Response):
     submitted = (payload.get("password") or "").strip()
     if not submitted:
         raise HTTPException(status_code=400, detail="ادخل كلمة المرور")
-    if not hmac.compare_digest(submitted, KEVIN_PASSWORD):
+    # Compare as UTF-8 bytes so non-ASCII passwords (e.g. Arabic) work;
+    # hmac.compare_digest rejects str inputs that contain non-ASCII characters.
+    if not hmac.compare_digest(submitted.encode("utf-8"), KEVIN_PASSWORD.encode("utf-8")):
         raise HTTPException(status_code=401, detail="كلمة مرور خاطئة")
     token = make_session_token()
     response.set_cookie(

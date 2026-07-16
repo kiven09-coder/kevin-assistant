@@ -1907,6 +1907,36 @@ async def status(_auth: bool = Depends(require_auth)):
         "memory_facts": len(mem.get("facts", [])),
     }
 
+def _dedupe_immediate_repeats(text: str) -> str:
+    """Collapse runs of the same word (Whisper stutter) into a single word."""
+    out = []
+    for w in text.split():
+        if not out or out[-1] != w:
+            out.append(w)
+    return " ".join(out)
+
+
+def _looks_like_hallucination(text: str) -> bool:
+    """Detect Whisper's silence/noise hallucinations (one word/phrase looped).
+
+    On near-silent, too-short, or noisy audio Whisper often emits the same
+    token repeated many times (e.g. 'أعرف أعرف أعرف ...'). Reject those so we
+    don't feed garbage to the LLM.
+    """
+    from collections import Counter
+    words = text.split()
+    if len(words) < 4:
+        return False
+    counts = Counter(words)
+    # One word makes up half or more of the utterance -> looped hallucination.
+    if counts.most_common(1)[0][1] / len(words) >= 0.5:
+        return True
+    # Very little lexical variety for the length -> also a loop.
+    if len(set(words)) <= max(2, len(words) // 4):
+        return True
+    return False
+
+
 @app.post("/api/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...), _auth: bool = Depends(require_auth)):
     """Convert Arabic audio to text using Whisper."""
@@ -1947,6 +1977,13 @@ async def transcribe_audio(audio: UploadFile = File(...), _auth: bool = Depends(
 
         if not text or len(text) < 2:
             raise HTTPException(status_code=400, detail="مسمعتش كلام واضح. اتكلم بصوت أعلى")
+
+        # Reject looped hallucinations (check raw text BEFORE collapsing repeats,
+        # otherwise the repetition signal is lost), then clean any stutters.
+        if _looks_like_hallucination(text):
+            print(f"⚠️ رفض هلوسة Whisper (تكرار): '{text[:80]}'")
+            raise HTTPException(status_code=400, detail="مسمعتش كلام واضح، جرّب تاني واتكلم قريّب من المايك 🎤")
+        text = _dedupe_immediate_repeats(text)
 
         return {"text": text, "language": "ar", "audio_size": audio_size}
     except HTTPException:

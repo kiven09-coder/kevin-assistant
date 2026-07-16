@@ -1845,6 +1845,27 @@ async def serve_login(kevin_session: str = Cookie(None)):
         return RedirectResponse(url="/", status_code=303)
     return HTMLResponse(LOGIN_HTML)
 
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_dashboard(kevin_session: str = Cookie(None)):
+    """Cinematic Arabic JARVIS globe command center (self-contained HTML)."""
+    if not verify_session_token(kevin_session or ""):
+        return RedirectResponse(url="/login", status_code=303)
+    path = Path(__file__).resolve().parent / "dashboard.html"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="dashboard.html غير موجود")
+    return HTMLResponse(path.read_text(encoding="utf-8"))
+
+@app.get("/jarvis_data.js")
+async def serve_jarvis_data(_auth: bool = Depends(require_auth)):
+    """Serve the Arabic dashboard data file (edited day-to-day, read fresh each request)."""
+    path = Path(__file__).resolve().parent / "jarvis_data.js"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="jarvis_data.js غير موجود")
+    return FileResponse(
+        path, media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
 @app.post("/api/login")
 async def api_login(payload: dict, response: Response):
     if not KEVIN_PASSWORD:
@@ -1852,7 +1873,9 @@ async def api_login(payload: dict, response: Response):
     submitted = (payload.get("password") or "").strip()
     if not submitted:
         raise HTTPException(status_code=400, detail="ادخل كلمة المرور")
-    if not hmac.compare_digest(submitted, KEVIN_PASSWORD):
+    # Compare as UTF-8 bytes so non-ASCII passwords (e.g. Arabic) work;
+    # hmac.compare_digest rejects str inputs that contain non-ASCII characters.
+    if not hmac.compare_digest(submitted.encode("utf-8"), KEVIN_PASSWORD.encode("utf-8")):
         raise HTTPException(status_code=401, detail="كلمة مرور خاطئة")
     token = make_session_token()
     response.set_cookie(
@@ -1883,6 +1906,36 @@ async def status(_auth: bool = Depends(require_auth)):
         "tools": list(TOOLS_REGISTRY.keys()),
         "memory_facts": len(mem.get("facts", [])),
     }
+
+def _dedupe_immediate_repeats(text: str) -> str:
+    """Collapse runs of the same word (Whisper stutter) into a single word."""
+    out = []
+    for w in text.split():
+        if not out or out[-1] != w:
+            out.append(w)
+    return " ".join(out)
+
+
+def _looks_like_hallucination(text: str) -> bool:
+    """Detect Whisper's silence/noise hallucinations (one word/phrase looped).
+
+    On near-silent, too-short, or noisy audio Whisper often emits the same
+    token repeated many times (e.g. 'أعرف أعرف أعرف ...'). Reject those so we
+    don't feed garbage to the LLM.
+    """
+    from collections import Counter
+    words = text.split()
+    if len(words) < 4:
+        return False
+    counts = Counter(words)
+    # One word makes up half or more of the utterance -> looped hallucination.
+    if counts.most_common(1)[0][1] / len(words) >= 0.5:
+        return True
+    # Very little lexical variety for the length -> also a loop.
+    if len(set(words)) <= max(2, len(words) // 4):
+        return True
+    return False
+
 
 @app.post("/api/transcribe")
 async def transcribe_audio(audio: UploadFile = File(...), _auth: bool = Depends(require_auth)):
@@ -1924,6 +1977,13 @@ async def transcribe_audio(audio: UploadFile = File(...), _auth: bool = Depends(
 
         if not text or len(text) < 2:
             raise HTTPException(status_code=400, detail="مسمعتش كلام واضح. اتكلم بصوت أعلى")
+
+        # Reject looped hallucinations (check raw text BEFORE collapsing repeats,
+        # otherwise the repetition signal is lost), then clean any stutters.
+        if _looks_like_hallucination(text):
+            print(f"⚠️ رفض هلوسة Whisper (تكرار): '{text[:80]}'")
+            raise HTTPException(status_code=400, detail="مسمعتش كلام واضح، جرّب تاني واتكلم قريّب من المايك 🎤")
+        text = _dedupe_immediate_repeats(text)
 
         return {"text": text, "language": "ar", "audio_size": audio_size}
     except HTTPException:
@@ -2105,5 +2165,6 @@ if __name__ == "__main__":
     print("-" * 64)
     print(f"  💻 لابتوب:  http://localhost:{PORT}")
     print(f"  📱 موبايل:  http://{local_ip}:{PORT}")
+    print(f"  🖥️ لوحة القيادة (JARVIS):  http://localhost:{PORT}/dashboard")
     print("=" * 64 + "\n")
     uvicorn.run(app, host=HOST, port=PORT, log_level="info")

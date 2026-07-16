@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>كيفن | مركز القيادة</title>
+<style>
+  /* ============================================================
+     لوحة قيادة كيفن (JARVIS) — كل الواجهة والصوت بالعربي
+     ملف واحد قائم بذاته: Canvas + CSS، من غير أي مكتبات خارجية.
+     البيانات بتتقرأ من jarvis_data.js  (window.JARVIS_DATA)
+     ============================================================ */
+  :root{
+    --bg:#03060f;
+    --bg2:#050a18;
+    --cyan:#38e6ff;
+    --cyan-soft:#7ff3ff;
+    --cyan-dim:rgba(56,230,255,.55);
+    --amber:#ffb23e;
+    --green:#37f5a0;
+    --ink:#cdeeff;
+    --ink-dim:rgba(205,238,255,.55);
+    --line:rgba(56,230,255,.18);
+    --panel:rgba(6,16,32,.42);
+    --mono:'Share Tech Mono','DejaVu Sans Mono','Courier New',monospace;
+    --ar:'Cairo','Tajawal','Segoe UI','Noto Kufi Arabic',Tahoma,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:radial-gradient(120% 120% at 50% 40%,#071331 0%,var(--bg2) 45%,var(--bg) 100%);
+    color:var(--ink);
+    font-family:var(--ar);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  #stage{position:fixed;inset:0}
+  canvas#globe{position:absolute;inset:0;width:100%;height:100%}
+
+  /* شبكة الـHUD فوق الكانفس */
+  .hud{position:absolute;inset:0;pointer-events:none;z-index:3}
+  .hud > *{pointer-events:auto}
+
+  /* ---- الزوايا العلوية ---- */
+  .corner{position:absolute;top:26px}
+  .top-right{right:34px;text-align:right}
+  .top-left{left:34px;text-align:left}
+
+  .title{
+    font-family:var(--ar);
+    font-weight:800;
+    font-size:38px;
+    letter-spacing:2px;
+    color:#eafcff;
+    text-shadow:0 0 18px rgba(56,230,255,.55);
+    line-height:1;
+  }
+  .title .dot{color:var(--cyan)}
+  .subtitle{margin-top:8px;font-size:13px;color:var(--cyan-soft);letter-spacing:1px}
+  .gen-date{margin-top:4px;font-size:12px;color:var(--ink-dim);font-family:var(--mono);direction:ltr;unicode-bidi:plaintext}
+
+  .clock{
+    font-family:var(--mono);
+    font-size:44px;
+    color:#eafcff;
+    letter-spacing:3px;
+    text-shadow:0 0 16px rgba(56,230,255,.5);
+    direction:ltr;
+  }
+  .clock .sec{color:var(--cyan);font-size:26px}
+  .clock-date{font-size:12px;color:var(--ink-dim);letter-spacing:1px;margin-top:2px}
+
+  /* ---- قائمة الموصلات ---- */
+  .connectors{margin-top:16px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+  .conn{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink);letter-spacing:.3px}
+  .conn .led{width:9px;height:9px;border-radius:50%;flex:none}
+  .conn.on  .led{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .conn.off .led{background:var(--amber);box-shadow:0 0 8px var(--amber);animation:blink 1.1s infinite}
+  .conn.off{color:var(--ink-dim)}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* ---- سجل النشاط (يمين) ---- */
+  .log-wrap{position:absolute;top:296px;right:34px;width:320px;max-width:34vw}
+  .panel-label{font-size:11px;letter-spacing:3px;color:var(--cyan-dim);margin-bottom:10px;font-family:var(--mono)}
+  .log{display:flex;flex-direction:column;gap:9px}
+  .log-line{
+    font-size:13px;color:var(--ink);line-height:1.5;
+    padding-right:14px;position:relative;opacity:0;transform:translateY(6px);
+    transition:opacity .5s ease,transform .5s ease;
+  }
+  .log-line.show{opacity:1;transform:none}
+  .log-line::before{content:"›";position:absolute;right:0;color:var(--cyan);font-family:var(--mono)}
+
+  /* ---- لوحة الإحصائيات (يسار) ---- */
+  .stats{position:absolute;top:150px;left:34px;width:300px;max-width:32vw}
+  .bar-row{margin-bottom:16px}
+  .bar-head{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-dim);margin-bottom:6px}
+  .bar-head b{color:var(--ink);font-family:var(--mono);direction:ltr}
+  .bar-track{height:6px;border-radius:6px;background:rgba(56,230,255,.08);overflow:hidden}
+  .bar-fill{height:100%;width:0;border-radius:6px;
+    background:linear-gradient(90deg,rgba(56,230,255,.25),var(--cyan));
+    box-shadow:0 0 12px rgba(56,230,255,.5);transition:width 1.4s cubic-bezier(.2,.7,.2,1)}
+
+  /* ---- الأرقام الكبيرة (أسفل) ---- */
+  .figures{position:absolute;bottom:118px;left:0;right:0;display:flex;justify-content:center;gap:46px;flex-wrap:wrap;padding:0 24px}
+  .fig{text-align:center;min-width:90px}
+  .fig .v{font-family:var(--mono);font-size:30px;color:#eafcff;text-shadow:0 0 14px rgba(56,230,255,.45);direction:ltr;unicode-bidi:plaintext}
+  .fig .k{font-size:11.5px;color:var(--ink-dim);letter-spacing:.5px;margin-top:4px}
+
+  /* شريحة الدفع المستحق */
+  .pay-chip{
+    position:absolute;bottom:180px;left:50%;transform:translateX(-50%);
+    display:none;align-items:center;gap:8px;
+    background:rgba(255,178,62,.12);border:1px solid rgba(255,178,62,.5);
+    color:var(--amber);font-size:12.5px;padding:7px 14px;border-radius:999px;
+    box-shadow:0 0 18px rgba(255,178,62,.25);letter-spacing:.3px;
+  }
+  .pay-chip.show{display:inline-flex}
+  .pay-chip .pdot{width:8px;height:8px;border-radius:50%;background:var(--amber);animation:blink 1.4s infinite}
+
+  /* ---- الشريط السفلي ---- */
+  .bottom-bar{
+    position:absolute;bottom:24px;left:34px;right:34px;height:60px;
+    display:flex;align-items:center;gap:18px;
+    background:var(--panel);border:1px solid var(--line);border-radius:16px;
+    padding:0 18px;backdrop-filter:blur(6px);
+  }
+  .btn{
+    font-family:var(--ar);font-weight:700;font-size:14px;letter-spacing:1px;
+    color:#eafcff;background:rgba(56,230,255,.08);
+    border:1px solid var(--cyan-dim);border-radius:12px;
+    padding:11px 20px;cursor:pointer;white-space:nowrap;
+    box-shadow:0 0 0 rgba(56,230,255,0);transition:box-shadow .25s,background .25s,transform .1s;
+  }
+  .btn:hover{background:rgba(56,230,255,.18);box-shadow:0 0 22px rgba(56,230,255,.4)}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:rgba(56,230,255,.16);box-shadow:0 0 18px rgba(56,230,255,.3)}
+  .btn.speaking{background:rgba(56,230,255,.28);box-shadow:0 0 30px rgba(56,230,255,.6);animation:pulseBtn 1s infinite}
+  @keyframes pulseBtn{0%,100%{box-shadow:0 0 22px rgba(56,230,255,.4)}50%{box-shadow:0 0 40px rgba(56,230,255,.75)}}
+
+  .mic{width:52px;height:52px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:20px}
+  .mic.rec{background:rgba(255,60,90,.18);border-color:rgba(255,80,110,.7);box-shadow:0 0 24px rgba(255,80,110,.5);animation:pulseBtn 1s infinite}
+
+  .ticker{flex:1;overflow:hidden;white-space:nowrap;position:relative;height:20px;mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
+  .ticker span{position:absolute;white-space:nowrap;font-size:12.5px;color:var(--cyan-soft);letter-spacing:.5px;will-change:transform;animation:scroll-rtl 28s linear infinite}
+  @keyframes scroll-rtl{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+  /* شريط الرد/الحالة اللحظي */
+  .live{position:absolute;bottom:96px;left:50%;transform:translateX(-50%);max-width:70vw;
+    font-size:13.5px;color:var(--cyan-soft);text-align:center;letter-spacing:.3px;
+    text-shadow:0 0 12px rgba(56,230,255,.35);opacity:0;transition:opacity .4s;line-height:1.6}
+  .live.show{opacity:1}
+
+  /* تأثيرات سينمائية: خطوط مسح + فينييت */
+  .scanlines{position:fixed;inset:0;pointer-events:none;z-index:5;opacity:.06;
+    background:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 3px)}
+  .vignette{position:fixed;inset:0;pointer-events:none;z-index:4;
+    background:radial-gradient(120% 120% at 50% 45%,transparent 55%,rgba(0,0,0,.72) 100%)}
+
+  @media (max-width:820px){
+    .title{font-size:28px}.clock{font-size:32px}
+    .stats,.log-wrap{display:none}
+    .figures{gap:22px;bottom:150px}
+    .fig .v{font-size:22px}
+  }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="globe"></canvas>
+
+    <div class="hud">
+      <!-- العنوان + الموصلات -->
+      <div class="corner top-right">
+        <div class="title">كيفـن<span class="dot">.</span></div>
+        <div class="subtitle" id="greeting">أهلاً بيك</div>
+        <div class="gen-date" id="gen-date"></div>
+        <div class="connectors" id="connectors"></div>
+      </div>
+
+      <!-- الساعة -->
+      <div class="corner top-left">
+        <div class="clock" id="clock">00:00<span class="sec">00</span></div>
+        <div class="clock-date" id="clock-date"></div>
+      </div>
+
+      <!-- سجل النشاط -->
+      <div class="log-wrap">
+        <div class="panel-label">سجل النشاط</div>
+        <div class="log" id="log"></div>
+      </div>
+
+      <!-- الإحصائيات -->
+      <div class="stats">
+        <div class="panel-label">قمع المحتوى</div>
+        <div id="stats"></div>
+      </div>
+
+      <!-- شريحة الدفع -->
+      <div class="pay-chip" id="pay-chip"><span class="pdot"></span><span id="pay-text"></span></div>
+
+      <!-- الأرقام الكبيرة -->
+      <div class="figures" id="figures"></div>
+
+      <!-- شريط الرد اللحظي -->
+      <div class="live" id="live"></div>
+
+      <!-- الشريط السفلي -->
+      <div class="bottom-bar">
+        <button class="btn primary" id="brief-btn" onclick="onBrief()">لخّص لي</button>
+        <button class="btn mic" id="mic-btn" title="اضغط وكلّمني" onclick="onMic()">🎤</button>
+        <div class="ticker"><span id="ticker">كيفن جاهز</span></div>
+        <button class="btn" id="first-btn" onclick="onFirst()">أبدأ بإيه؟</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="vignette"></div>
+  <div class="scanlines"></div>
+
+  <!-- عنصر صوت مخفي للبريف الجاهز (اختياري: jarvis_brief.mp3) -->
+  <audio id="brief-audio" src="jarvis_brief.mp3" preload="none"></audio>
+
+  <script src="jarvis_data.js"></script>
+  <script>
+  "use strict";
+  const D = window.JARVIS_DATA || {};
+  const $ = (id)=>document.getElementById(id);
+
+  /* حالة التحدّث: الكرة بتنبض أقوى وأسرع وقت الكلام */
+  let speaking = false;
+  let speakEnergy = 0;        // مغلّف اصطناعي لموجة الكلام (يشتغل أوفلاين)
+  let currentAudio = null;
+
+  /* ============================================================
+     1) الكرة الطاقية السينمائية (Canvas)
+     ============================================================ */
+  const cv = $('globe');
+  const ctx = cv.getContext('2d');
+  let W=0,H=0,CX=0,CY=0,R=0,DPR=1;
+
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio||1, 2); // retina-aware
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = W*DPR; cv.height = H*DPR;
+    cv.style.width = W+'px'; cv.style.height = H+'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    CX = W/2; CY = H/2;
+    R = Math.min(W,H) * 0.20;
+  }
+  window.addEventListener('resize', resize); resize();
+
+  /* توزيع فيبوناتشي: ~680 نقطة على كرة */
+  const N = 680;
+  const pts = [];
+  (function buildSphere(){
+    const gold = Math.PI * (3 - Math.sqrt(5));
+    for(let i=0;i<N;i++){
+      const y = 1 - (i/(N-1))*2;      // من 1 لـ -1
+      const r = Math.sqrt(1 - y*y);
+      const t = gold * i;
+      pts.push({x:Math.cos(t)*r, y:y, z:Math.sin(t)*r});
+    }
+  })();
+
+  const TILT = 0.42;               // ميل الكرة
+  const cosT = Math.cos(TILT), sinT = Math.sin(TILT);
+
+  function drawArc(cx,cy,rad,a0,a1,color,width,dash){
+    ctx.beginPath();
+    ctx.setLineDash(dash||[]);
+    ctx.arc(cx,cy,rad,a0,a1);
+    ctx.strokeStyle=color; ctx.lineWidth=width; ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function frame(tms){
+    const t = tms/1000;
+    ctx.clearRect(0,0,W,H);
+
+    // تنفّس وقت الخمول، نبض أقوى وقت الكلام
+    if(speaking){ speakEnergy = Math.min(1, speakEnergy+0.08); }
+    else { speakEnergy = Math.max(0, speakEnergy-0.04); }
+    const idleBreath = Math.sin(t*1.1)*0.02 + 1;
+    // مغلّف كلام اصطناعي (كذا تردد متراكب) — بيدّي إحساس إن الصوت بيتكلم
+    const talk = speaking ? (0.5 + 0.5*Math.abs(Math.sin(t*7)+0.6*Math.sin(t*13)+0.35*Math.sin(t*23)))/1.95 : 0;
+    const pulse = idleBreath + speakEnergy*(0.10 + talk*0.28);
+    const rot = t*0.32 + speakEnergy*t*0.35;   // بيلف أسرع وهو بيتكلم
+
+    // توهّج شعاعي ناعم خلف الكرة
+    const glowR = R*pulse*3.1;
+    const g = ctx.createRadialGradient(CX,CY,R*0.2,CX,CY,glowR);
+    const gAlpha = 0.22 + speakEnergy*0.18;
+    g.addColorStop(0,`rgba(56,230,255,${gAlpha})`);
+    g.addColorStop(0.4,'rgba(30,120,190,0.10)');
+    g.addColorStop(1,'rgba(3,6,15,0)');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(CX,CY,glowR,0,7); ctx.fill();
+
+    // أشعة شعاعية خافتة
+    ctx.save(); ctx.translate(CX,CY);
+    for(let i=0;i<48;i++){
+      const a = (i/48)*Math.PI*2 + t*0.05;
+      const inner=R*1.5, outer=R*(2.4+0.15*Math.sin(t+i));
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a)*inner, Math.sin(a)*inner);
+      ctx.lineTo(Math.cos(a)*outer, Math.sin(a)*outer);
+      ctx.strokeStyle='rgba(56,230,255,0.05)'; ctx.lineWidth=1; ctx.stroke();
+    }
+    ctx.restore();
+
+    // نقاط الكرة (3D → 2D مع ميل ودوران)
+    const rNow = R*pulse;
+    for(let i=0;i<N;i++){
+      const p = pts[i];
+      // دوران حول محور Y
+      const cx = Math.cos(rot), sx = Math.sin(rot);
+      let x = p.x*cx - p.z*sx;
+      let z = p.x*sx + p.z*cx;
+      let y = p.y;
+      // ميل حول محور X
+      const y2 = y*cosT - z*sinT;
+      const z2 = y*sinT + z*cosT;
+      const depth = (z2+1)/2;                 // 0 خلف .. 1 قدّام
+      const sx2 = CX + x*rNow;
+      const sy2 = CY + y2*rNow;
+      const size = 0.6 + depth*2.0;
+      const alpha = 0.15 + depth*0.85;
+      ctx.beginPath();
+      ctx.arc(sx2,sy2,size,0,7);
+      ctx.fillStyle = `rgba(${120+depth*80|0},${230},255,${alpha})`;
+      ctx.fill();
+    }
+
+    // النواة النابضة
+    const coreR = R*0.16*(1 + 0.25*Math.sin(t*2.2) + speakEnergy*0.5*talk);
+    const cg = ctx.createRadialGradient(CX,CY,0,CX,CY,coreR*3);
+    cg.addColorStop(0,'rgba(230,252,255,0.95)');
+    cg.addColorStop(0.3,`rgba(56,230,255,${0.6+speakEnergy*0.3})`);
+    cg.addColorStop(1,'rgba(56,230,255,0)');
+    ctx.fillStyle=cg; ctx.beginPath(); ctx.arc(CX,CY,coreR*3,0,7); ctx.fill();
+
+    // حلقة مدارية مائلة + علامة متحركة
+    ctx.save(); ctx.translate(CX,CY); ctx.scale(1, 0.34);
+    drawArc(0,0,R*1.7,0,Math.PI*2,'rgba(56,230,255,0.35)',1.4);
+    const ma = t*0.9;
+    const mx = Math.cos(ma)*R*1.7, my = Math.sin(ma)*R*1.7;
+    ctx.beginPath(); ctx.arc(mx,my,4,0,7);
+    ctx.fillStyle='#eafcff'; ctx.shadowColor='#38e6ff'; ctx.shadowBlur=14; ctx.fill(); ctx.shadowBlur=0;
+    ctx.restore();
+
+    // ثلاث أقواس HUD متقطّعة بتلف بسرعات مختلفة
+    drawArc(CX,CY,R*1.35, t*0.6,      t*0.6+Math.PI*1.4,  'rgba(56,230,255,0.5)', 1.5,[3,9]);
+    drawArc(CX,CY,R*1.55,-t*0.4,     -t*0.4+Math.PI*1.1,  'rgba(56,230,255,0.32)',1.2,[2,14]);
+    drawArc(CX,CY,R*1.9,  t*0.25,     t*0.25+Math.PI*1.6, 'rgba(56,230,255,0.22)',1,  [1,20]);
+
+    // حلقة علامات خارجية
+    ctx.save(); ctx.translate(CX,CY);
+    for(let i=0;i<72;i++){
+      const a=(i/72)*Math.PI*2;
+      const long = i%6===0;
+      const r1=R*2.15, r2=R*(long?2.32:2.25);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a)*r1,Math.sin(a)*r1);
+      ctx.lineTo(Math.cos(a)*r2,Math.sin(a)*r2);
+      ctx.strokeStyle=long?'rgba(56,230,255,0.55)':'rgba(56,230,255,0.25)';
+      ctx.lineWidth=long?1.6:1; ctx.stroke();
+    }
+    ctx.restore();
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  /* ============================================================
+     2) تعبئة الـHUD من البيانات
+     ============================================================ */
+  // أرقام عربية
+  const AR_DIGITS = ['٠','١','٢','٣','٤','٥','٦','٧','٨','٩'];
+  const toAr = (s)=>String(s).replace(/[0-9]/g,d=>AR_DIGITS[+d]);
+
+  $('greeting').textContent = D.greeting || 'أهلاً بيك';
+  $('gen-date').textContent = D.generated || '';
+  $('ticker').textContent   = D.ticker || 'كيفن جاهز • كل الأنظمة تعمل';
+
+  // الموصلات
+  (function(){
+    const box=$('connectors');
+    (D.connectors||[]).forEach(c=>{
+      const el=document.createElement('div');
+      el.className='conn '+(c.online?'on':'off');
+      el.dataset.key = c.key||'';
+      el.innerHTML=`<span class="led"></span><span>${c.name}</span>`;
+      box.appendChild(el);
+    });
+  })();
+
+  // سجل النشاط (يظهر سطر سطر)
+  (function(){
+    const box=$('log');
+    const items=(D.priorities||[]);
+    items.forEach(txt=>{
+      const el=document.createElement('div');
+      el.className='log-line'; el.textContent=txt; box.appendChild(el);
+    });
+    let i=0;
+    (function reveal(){
+      const lines=box.children;
+      if(i<lines.length){ lines[i].classList.add('show'); i++; setTimeout(reveal,650); }
+    })();
+  })();
+
+  // أعمدة الإحصائيات
+  (function(){
+    const box=$('stats');
+    const f=(D.content&&D.content.funnel)||[];
+    f.forEach(row=>{
+      const pct=Math.max(4,Math.min(100,Math.round((row.value/row.max)*100)));
+      const el=document.createElement('div'); el.className='bar-row';
+      el.innerHTML=`<div class="bar-head"><span>${row.label}</span><b>${toAr(row.value.toLocaleString('en-US'))}</b></div>
+                    <div class="bar-track"><div class="bar-fill"></div></div>`;
+      box.appendChild(el);
+      requestAnimationFrame(()=>{ el.querySelector('.bar-fill').style.width=pct+'%'; });
+    });
+  })();
+
+  // الأرقام الكبيرة
+  (function(){
+    const box=$('figures');
+    (D.bigFigures||[]).forEach(fig=>{
+      const el=document.createElement('div'); el.className='fig';
+      el.innerHTML=`<div class="v">${toAr(fig.value)}</div><div class="k">${fig.label}</div>`;
+      box.appendChild(el);
+    });
+  })();
+
+  // شريحة الدفع
+  (function(){
+    if(D.paymentDue){ $('pay-text').textContent=D.paymentDue; $('pay-chip').classList.add('show'); }
+  })();
+
+  /* الساعة الحيّة */
+  const DAYS=['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  const MONTHS=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  function tick(){
+    const d=new Date();
+    const hh=String(d.getHours()).padStart(2,'0');
+    const mm=String(d.getMinutes()).padStart(2,'0');
+    const ss=String(d.getSeconds()).padStart(2,'0');
+    $('clock').innerHTML=`${hh}:${mm}<span class="sec">${ss}</span>`;
+    $('clock-date').textContent=`${DAYS[d.getDay()]} ${toAr(d.getDate())} ${MONTHS[d.getMonth()]} ${toAr(d.getFullYear())}`;
+  }
+  tick(); setInterval(tick,1000);
+
+  /* ============================================================
+     3) الوصل بسيرفر كيفن — كله بالعربي
+        - /api/status  : تحديث حالة الموصلات
+        - /api/chat    : السؤال والرد
+        - /api/speak   : تحويل الرد لصوت عربي
+        - /api/transcribe : تحويل صوتك لنص (Whisper)
+     ============================================================ */
+  const API = '';   // نفس الأصل (السيرفر بيقدّم الداشبورد)
+
+  // تحديث حالة claude/gemini من السيرفر لو متاح
+  (async function syncStatus(){
+    try{
+      const r=await fetch(API+'/api/status',{credentials:'same-origin'});
+      if(!r.ok) return;
+      const s=await r.json();
+      const map={claude:s.claude_available, gemini:s.gemini_available};
+      document.querySelectorAll('.conn').forEach(el=>{
+        const k=el.dataset.key;
+        if(k && k in map){
+          const on=!!map[k];
+          el.classList.toggle('on',on); el.classList.toggle('off',!on);
+        }
+      });
+    }catch(e){/* أوفلاين — نسيب البيانات الثابتة زي ما هي */}
+  })();
+
+  function setLive(text){ const el=$('live'); el.textContent=text; el.classList.toggle('show',!!text); }
+
+  async function speak(text){
+    if(!text) return;
+    try{
+      const r=await fetch(API+'/api/speak',{
+        method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+        body:JSON.stringify({text:text.substring(0,500)})
+      });
+      if(!r.ok) throw new Error('speak '+r.status);
+      const blob=await r.blob();
+      if(currentAudio){ currentAudio.pause(); }
+      currentAudio=new Audio(URL.createObjectURL(blob));
+      speaking=true; $('brief-btn').classList.add('speaking'); $('brief-btn').textContent='بيتكلم…';
+      currentAudio.onended=()=>{ speaking=false; $('brief-btn').classList.remove('speaking'); $('brief-btn').textContent='لخّص لي'; };
+      await currentAudio.play();
+    }catch(e){
+      speaking=false; $('brief-btn').classList.remove('speaking'); $('brief-btn').textContent='لخّص لي';
+      console.warn('تعذّر تشغيل الصوت:',e);
+    }
+  }
+
+  async function ask(message){
+    setLive('كيفن بيفكّر…');
+    try{
+      const r=await fetch(API+'/api/chat',{
+        method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',
+        body:JSON.stringify({message,provider:'claude'})
+      });
+      if(r.status===401){ setLive('محتاج تسجّل الدخول الأول.'); return null; }
+      if(!r.ok) throw new Error('chat '+r.status);
+      const data=await r.json();
+      setLive(data.response||'');
+      speak(data.response||'');
+      return data.response;
+    }catch(e){
+      setLive('تعذّر الاتصال بالسيرفر. افتح الداشبورد من داخل كيفن (localhost) مش كملف.');
+      return null;
+    }
+  }
+
+  // زر «لخّص لي»
+  window.onBrief=function(){
+    // لو فيه ملف صوت بريف جاهز، شغّله؛ غير كده اطلب بريف حيّ من كيفن
+    const a=$('brief-audio');
+    if(a && a.getAttribute('src') && a.networkState!==a.NETWORK_NO_SOURCE){
+      a.onerror=()=>liveBrief();
+      a.oncanplay=()=>{
+        speaking=true; $('brief-btn').classList.add('speaking'); $('brief-btn').textContent='بيتكلم…';
+        a.onended=()=>{ speaking=false; $('brief-btn').classList.remove('speaking'); $('brief-btn').textContent='لخّص لي'; };
+      };
+      a.play().catch(()=>liveBrief());
+    } else { liveBrief(); }
+  };
+  function liveBrief(){
+    const parts=[];
+    if(D.greeting) parts.push(D.greeting);
+    if(D.headline) parts.push(D.headline);
+    (D.priorities||[]).slice(0,3).forEach((p,i)=>parts.push(`${toAr(i+1)}) ${p}`));
+    if(D.paymentDue) parts.push('تنبيه: '+D.paymentDue);
+    if(D.closer) parts.push(D.closer);
+    const brief=parts.join('. ');
+    setLive(brief); speak(brief);
+  }
+
+  // زر «أبدأ بإيه؟» — بيسأل كيفن حيّ
+  window.onFirst=function(){
+    ask('بص على أولوياتي دلوقتي واقترح عليّا أبدأ بإيه الأول وليه، في جملتين بالعربي المصري.');
+  };
+
+  /* المايك: تسجيل → تفريغ نصّي → سؤال → رد صوتي */
+  let mediaRec=null, chunks=[], recording=false;
+  window.onMic=async function(){
+    const btn=$('mic-btn');
+    if(recording){ mediaRec && mediaRec.stop(); return; }
+    if(!navigator.mediaDevices || !window.MediaRecorder){ setLive('المتصفح مش بيدعم التسجيل الصوتي.'); return; }
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      mediaRec=new MediaRecorder(stream); chunks=[];
+      mediaRec.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+      mediaRec.onstop=async()=>{
+        recording=false; btn.classList.remove('rec'); btn.textContent='🎤';
+        stream.getTracks().forEach(t=>t.stop());
+        const blob=new Blob(chunks,{type:'audio/webm'});
+        if(blob.size<1200){ setLive('التسجيل قصير — اتكلم ٢-٣ ثواني.'); return; }
+        setLive('بحوّل كلامك لنص…');
+        try{
+          const fd=new FormData(); fd.append('audio',blob,'rec.webm');
+          const r=await fetch(API+'/api/transcribe',{method:'POST',body:fd,credentials:'same-origin'});
+          if(!r.ok) throw new Error('stt '+r.status);
+          const j=await r.json();
+          const text=(j.text||'').trim();
+          if(!text){ setLive('مسمعتش حاجة واضحة، جرّب تاني.'); return; }
+          setLive('أنت: '+text);
+          setTimeout(()=>ask(text),400);
+        }catch(e){ setLive('تعذّر تحويل الصوت لنص.'); }
+      };
+      mediaRec.start(); recording=true; btn.classList.add('rec'); btn.textContent='■';
+      setLive('بسمعك… اضغط تاني لما تخلّص.');
+    }catch(e){ setLive('محتاج إذن استخدام المايك.'); }
+  };
+  </script>
+</body>
+</html>

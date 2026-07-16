@@ -1845,6 +1845,27 @@ async def serve_login(kevin_session: str = Cookie(None)):
         return RedirectResponse(url="/", status_code=303)
     return HTMLResponse(LOGIN_HTML)
 
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_dashboard(kevin_session: str = Cookie(None)):
+    """Cinematic Arabic JARVIS globe command center (self-contained HTML)."""
+    if not verify_session_token(kevin_session or ""):
+        return RedirectResponse(url="/login", status_code=303)
+    path = Path(__file__).resolve().parent / "dashboard.html"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="dashboard.html غير موجود")
+    return HTMLResponse(path.read_text(encoding="utf-8"))
+
+@app.get("/jarvis_data.js")
+async def serve_jarvis_data(_auth: bool = Depends(require_auth)):
+    """Serve the Arabic dashboard data file (edited day-to-day, read fresh each request)."""
+    path = Path(__file__).resolve().parent / "jarvis_data.js"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="jarvis_data.js غير موجود")
+    return FileResponse(
+        path, media_type="application/javascript",
+        headers={"Cache-Control": "no-store"},
+    )
+
 @app.post("/api/login")
 async def api_login(payload: dict, response: Response):
     if not KEVIN_PASSWORD:
@@ -2105,5 +2126,6 @@ if __name__ == "__main__":
     print("-" * 64)
     print(f"  💻 لابتوب:  http://localhost:{PORT}")
     print(f"  📱 موبايل:  http://{local_ip}:{PORT}")
+    print(f"  🖥️ لوحة القيادة (JARVIS):  http://localhost:{PORT}/dashboard")
     print("=" * 64 + "\n")
     uvicorn.run(app, host=HOST, port=PORT, log_level="info")
